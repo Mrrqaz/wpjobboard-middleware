@@ -1,0 +1,6 @@
+[build]
+builder = "nixpacks"
+buildCommand = "echo Building PHP app..."
+
+[deploy]
+startCommand = "php -S 0.0.0.0:$PORT -t ."
