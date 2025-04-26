@@ -1,5 +1,5 @@
 <?php
-// API Middleware for WPJobBoard
+// API Middleware for WPJobBoard - JSON version
 
 // Allow cross-origin requests
 header("Access-Control-Allow-Origin: *");
@@ -15,7 +15,6 @@ error_reporting(E_ALL);
 // Log incoming requests
 $logFile = 'api-requests.log';
 file_put_contents($logFile, date('Y-m-d H:i:s') . ' - Request received: ' . $_SERVER['REQUEST_METHOD'] . "\n", FILE_APPEND);
-file_put_contents($logFile, 'Request data: ' . print_r($_POST, true) . "\n", FILE_APPEND);
 
 // API Configuration
 define('API_URL_HOME', 'https://kdx3d1839g-staging.onrocket.site');
@@ -35,12 +34,22 @@ function encrypt($key, $plaintext) {
     ));
 }
 
+// Get JSON input
+$jsonInput = file_get_contents('php://input');
+$inputData = json_decode($jsonInput, true);
+
+// Log the JSON input
+file_put_contents($logFile, 'JSON Input: ' . $jsonInput . "\n", FILE_APPEND);
+
 // Determine the endpoint
 $endpoint = isset($_GET['endpoint']) ? $_GET['endpoint'] : 'jobs';
 $url = API_URL . '/api/' . $endpoint . '/';
 
 // Set up the headers with encrypted token
-$headers = array("X-Authorization: " . encrypt(API_ENCRYPTION_KEY, API_ACCESS_TOKEN));
+$headers = array(
+    "X-Authorization: " . encrypt(API_ENCRYPTION_KEY, API_ACCESS_TOKEN),
+    "Content-Type: application/x-www-form-urlencoded"
+);
 
 // Initialize cURL session
 $ch = curl_init();
@@ -60,10 +69,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     curl_setopt($ch, CURLOPT_POST, 1);
     
-    // Log the request data being sent
-    file_put_contents($logFile, 'Sending to WPJobBoard: ' . print_r($_POST, true) . "\n", FILE_APPEND);
+    // Prepare the form data from JSON input
+    $postData = array();
     
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($_POST));
+    if ($inputData && is_array($inputData)) {
+        foreach ($inputData as $key => $value) {
+            if (strpos($key, 'wpjb-job') === 0) {
+                $postData[$key] = $value;
+            } else {
+                $postData['wpjb-job[' . $key . ']'] = $value;
+            }
+        }
+    }
+    
+    // Log the prepared data
+    file_put_contents($logFile, 'Prepared Post Data: ' . print_r($postData, true) . "\n", FILE_APPEND);
+    
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postData));
 } elseif ($_SERVER['REQUEST_METHOD'] === 'GET') {
     // No additional settings needed for GET
 }
@@ -71,15 +93,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Execute the cURL request
 $result = curl_exec($ch);
 
-// Log the response
-file_put_contents($logFile, 'API Response: ' . $result . "\n\n", FILE_APPEND);
+// Log the raw response
+file_put_contents($logFile, 'Raw API Response: ' . $result . "\n\n", FILE_APPEND);
 
 // Check for cURL errors
 if (curl_errno($ch)) {
-    echo json_encode(['error' => 'cURL Error: ' . curl_error($ch)]);
+    $errorResponse = ['error' => 'cURL Error: ' . curl_error($ch)];
+    echo json_encode($errorResponse);
 } else {
-    // Return the API response
-    echo $result;
+    // Try to parse the result as JSON
+    $jsonResult = json_decode($result, true);
+    
+    // If it's valid JSON, return it as-is, otherwise wrap it in a JSON structure
+    if ($jsonResult !== null || trim($result) === '[]' || trim($result) === '{}') {
+        echo $result;
+    } else {
+        $wrappedResponse = ['data' => $result, 'raw_html' => true];
+        echo json_encode($wrappedResponse);
+    }
 }
 
 // Additional debugging info
